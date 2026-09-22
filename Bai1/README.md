@@ -1,3 +1,6 @@
+# Video quay app
+http://drive.google.com/drive/folders/1aZ0x9daQL6oheJvlF2Z1RYKS8Fg8RdXa?hl=vi
+
 # Welcome to your Expo app 👋
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
