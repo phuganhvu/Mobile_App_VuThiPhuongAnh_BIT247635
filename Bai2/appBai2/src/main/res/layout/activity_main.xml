@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FFFFFF"
+    android:paddingStart="11dp"
+    android:paddingEnd="11dp"
+    android:paddingTop="9dp">
+
+    <!-- Ô số 1 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:background="#2F80ED"
+        android:gravity="center"
+        android:text="1"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <!-- Khoảng cách -->
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="2dp" />
+
+    <!-- Ô số 2 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:background="#FF3B3B"
+        android:gravity="center"
+        android:text="2"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <!-- Khoảng cách -->
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="3dp" />
+
+    <!-- Hàng 3 - 4 - 5 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="81dp"
+        android:orientation="horizontal">
+
+        <!-- Ô số 3 -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.25"
+            android:background="#FFD21F"
+            android:gravity="center"
+            android:text="3"
+            android:textColor="#000000"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <!-- Khoảng cách -->
+        <Space
+            android:layout_width="2dp"
+            android:layout_height="match_parent" />
+
+        <!-- Ô số 4 -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.25"
+            android:background="#2DB36C"
+            android:gravity="center"
+            android:text="4"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <!-- Khoảng cách -->
+        <Space
+            android:layout_width="2dp"
+            android:layout_height="match_parent" />
+
+        <!-- Ô số 5 -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.25"
+            android:background="#7B3FE4"
+            android:gravity="center"
+            android:text="5"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.25"
+            android:background="#E6F4FE"
+            />
+
+    </LinearLayout>
+
+    <!-- Khoảng cách -->
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="3dp" />
+
+    <!-- Ô số 6 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="67dp"
+        android:background="#FF7518"
+        android:gravity="center"
+        android:text="6"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <!-- Phần trống đẩy dòng chữ xuống -->
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- Họ tên - MSSV -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="35dp"
+        android:gravity="center"
+        android:text="Vũ Thị Phương Anh - BIT247635"
+        android:textColor="#555555"
+        android:textSize="8sp" />
+
+</LinearLayout>
