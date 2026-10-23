@@ -6,6 +6,8 @@ import { LanguageProvider } from './src/context/LanguageContext';
 import DishListScreen from './src/screens/DishListScreen';
 import DishDetailScreen from './src/screens/DishDetailScreen';
 import DishFormScreen from './src/screens/DishFormScreen';
+import CategoryManagementScreen from './src/screens/CategoryManagementScreen';
+import CategoryFormScreen from './src/screens/CategoryFormScreen';
 import { RootStackParamList } from './src/types';
 import { LanguageContext } from './src/context/LanguageContext';
 
@@ -40,6 +42,16 @@ function AppNavigator() {
           name="DishForm"
           component={DishFormScreen}
           options={{ title: t('dishForm') }}
+        />
+        <Stack.Screen
+          name="CategoryManagement"
+          component={CategoryManagementScreen}
+          options={{ title: t('categories') }}
+        />
+        <Stack.Screen
+          name="CategoryForm"
+          component={CategoryFormScreen}
+          options={{ title: t('category') }}
         />
       </Stack.Navigator>
     </NavigationContainer>

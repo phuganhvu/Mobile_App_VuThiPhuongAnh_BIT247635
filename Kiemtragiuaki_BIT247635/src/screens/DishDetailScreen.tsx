@@ -1,22 +1,25 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useCallback, useContext } from 'react';
 import { View, Text, Image, ScrollView, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import axios, { isAxiosError } from 'axios';
+import NetInfo from '@react-native-community/netinfo';
+import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ENDPOINTS } from '../constants/api';
 import { LanguageContext } from '../context/LanguageContext';
 import { Dish, RootStackParamList } from '../types';
+import { deleteDishOffline, readCachedDishes } from '../services/offlineDishes';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'DishDetail'>;
 
 export default function DishDetailScreen({ route, navigation }: Props) {
-  const { dishId, refresh } = route.params;
+  const { dishId, categories, refresh } = route.params;
   const { t } = useContext(LanguageContext);
   const [dish, setDish] = useState<Dish | null>(null);
   const [selectedImg, setSelectedImg] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     let active = true;
     axios.get<Dish>(`${ENDPOINTS.DISHES}/${dishId}`).then(res => {
       if (!active) return;
@@ -25,8 +28,22 @@ export default function DishDetailScreen({ route, navigation }: Props) {
       const thumb = res.data.BIT247635_DishImage?.find(img => img.IsThumbnail)?.ImageUrl
         || res.data.BIT247635_DishImage?.[0]?.ImageUrl;
       setSelectedImg(thumb || '');
-    }).catch(error => {
+    }).catch(async error => {
       if (!active) return;
+      if (dishId.startsWith('local-') || (isAxiosError(error) && !error.response)) {
+        try {
+          const cachedDish = (await readCachedDishes()).find(item => item.id === dishId);
+          if (cachedDish) {
+            setDish(cachedDish);
+            const thumbnail = cachedDish.BIT247635_DishImage?.find(img => img.IsThumbnail)?.ImageUrl
+              || cachedDish.BIT247635_DishImage?.[0]?.ImageUrl;
+            setSelectedImg(thumbnail || '');
+            return;
+          }
+        } catch (cacheError) {
+          console.error('Could not load cached dish details:', cacheError);
+        }
+      }
       setLoadError(isAxiosError(error) && error.response
         ? `${t('serverError')} (${error.response.status})`
         : t('loadError'));
@@ -34,7 +51,7 @@ export default function DishDetailScreen({ route, navigation }: Props) {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [dishId, t]);
+  }, [dishId, t]));
 
   const handleDelete = () => {
     Alert.alert(t('delete'), t('confirmDelete'), [
@@ -43,9 +60,24 @@ export default function DishDetailScreen({ route, navigation }: Props) {
         text: t('ok'), 
         onPress: async () => {
           try {
-            await axios.delete(`${ENDPOINTS.DISHES}/${dishId}`);
-            refresh();
+            const connection = await NetInfo.fetch();
+            let deletedOffline = !connection.isConnected || dishId.startsWith('local-');
+            if (deletedOffline) {
+              await deleteDishOffline(dishId);
+            } else {
+              try {
+                await axios.delete(`${ENDPOINTS.DISHES}/${dishId}`);
+              } catch (error) {
+                if (!isAxiosError(error) || error.response) throw error;
+                deletedOffline = true;
+                await deleteDishOffline(dishId);
+              }
+            }
+            await refresh();
             navigation.goBack();
+            if (deletedOffline) {
+              Alert.alert(t('savedOfflineTitle'), t('deletedOffline'));
+            }
           } catch (error) {
             Alert.alert(t('error'), isAxiosError(error) && error.response
               ? `${t('deleteError')} (${error.response.status})`
@@ -98,7 +130,7 @@ export default function DishDetailScreen({ route, navigation }: Props) {
         <View style={styles.btnRow}>
           <TouchableOpacity 
             style={[styles.btn, styles.editBtn]}
-            onPress={() => navigation.navigate('DishForm', { editDish: dish, refresh })}
+            onPress={() => navigation.navigate('DishForm', { editDish: dish, categories, refresh })}
           >
             <Text style={styles.btnText}>{t('editDish')}</Text>
           </TouchableOpacity>

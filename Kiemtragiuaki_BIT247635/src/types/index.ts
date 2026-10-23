@@ -24,6 +24,8 @@ export interface Dish {
 
 export type RootStackParamList = {
   DishList: undefined;
-  DishDetail: { dishId: string; refresh: () => void };
-  DishForm: { editDish?: Dish; categories?: DishCategory[]; refresh: () => void };
+  DishDetail: { dishId: string; categories: DishCategory[]; refresh: () => Promise<void> };
+  DishForm: { editDish?: Dish; categories?: DishCategory[]; refresh: () => Promise<void> };
+  CategoryManagement: { refresh: () => Promise<void> };
+  CategoryForm: { category?: DishCategory; refresh: () => Promise<void> };
 };

@@ -1,10 +1,16 @@
 import React, { useState, useContext, useLayoutEffect } from 'react';
 import { View, Text, TextInput, Switch, TouchableOpacity, StyleSheet, Alert, ScrollView, ActivityIndicator } from 'react-native';
 import axios, { isAxiosError } from 'axios';
+import NetInfo from '@react-native-community/netinfo';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ENDPOINTS } from '../constants/api';
 import { LanguageContext } from '../context/LanguageContext';
-import { DishImage, RootStackParamList } from '../types';
+import { Dish, DishImage, RootStackParamList } from '../types';
+import {
+  removeOfflineAction,
+  replaceCachedDish,
+  saveDishOffline,
+} from '../services/offlineDishes';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'DishForm'>;
 
@@ -26,8 +32,10 @@ export default function DishFormScreen({ route, navigation }: Props) {
     editDish?.BIT247635_DishImage?.map(img => img.ImageUrl).join(', ') || ''
   );
   const [saving, setSaving] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSave = async () => {
+    setSaveError(null);
     if (!name.trim()) return Alert.alert(t('error'), t('valNameEmpty'));
     if (!Number.isFinite(Number(price)) || Number(price) <= 0) return Alert.alert(t('error'), t('valPriceInvalid'));
     if (!Number.isFinite(Number(prepTime)) || Number(prepTime) <= 0) return Alert.alert(t('error'), t('valPrepTimeInvalid'));
@@ -53,17 +61,61 @@ export default function DishFormScreen({ route, navigation }: Props) {
 
     try {
       setSaving(true);
-      if (editDish) {
-        await axios.put(`${ENDPOINTS.DISHES}/${editDish.id}`, payload);
-      } else {
-        await axios.post(ENDPOINTS.DISHES, payload);
+      const isLocalDraft = Boolean(editDish?.id.startsWith('local-'));
+      let isOnline = false;
+      let syncError: string | null = null;
+      const localDish: Dish = {
+        ...payload,
+        id: editDish?.id || `local-${Date.now()}`,
+      };
+
+      await saveDishOffline(localDish, !editDish || isLocalDraft);
+
+      if (!isLocalDraft) {
+        try {
+          const connection = await NetInfo.fetch();
+          isOnline = Boolean(connection.isConnected && connection.isInternetReachable !== false);
+        } catch {
+          isOnline = false;
+        }
       }
-      refresh();
+
+      if (isOnline) {
+        try {
+          if (editDish) {
+            await axios.put(`${ENDPOINTS.DISHES}/${editDish.id}`, payload);
+            const savedDish = await axios.get<Dish>(`${ENDPOINTS.DISHES}/${editDish.id}`);
+            if (savedDish.data.BIT247635_IsAvailable !== isAvailable) {
+              throw new Error(t('statusNotSaved'));
+            }
+            await removeOfflineAction(editDish.id);
+          } else {
+            const created = await axios.post<Dish>(ENDPOINTS.DISHES, payload);
+            await replaceCachedDish(localDish.id, created.data);
+            await removeOfflineAction(localDish.id);
+          }
+        } catch (error) {
+          syncError = isAxiosError(error) && error.response
+            ? `${error.response.status}: ${JSON.stringify(error.response.data)}`
+            : error instanceof Error
+              ? error.message
+              : t('saveError');
+          isOnline = false;
+        }
+      }
       navigation.goBack();
+      void refresh().catch(error => {
+        console.error('Could not refresh the dish list after saving:', error);
+      });
+      if (syncError) console.error('Dish saved locally; remote sync is pending:', syncError);
     } catch (error) {
-      Alert.alert(t('error'), isAxiosError(error) && error.response
-        ? `${t('saveError')} (${error.response.status})`
-        : t('saveError'));
+      const details = isAxiosError(error) && error.response
+        ? `${error.response.status}: ${JSON.stringify(error.response.data)}`
+        : error instanceof Error
+          ? error.message
+          : t('saveError');
+      setSaveError(`${t('saveError')} ${details}`);
+      Alert.alert(t('error'), `${t('saveError')}\n${details}`);
     } finally {
       setSaving(false);
     }
@@ -117,6 +169,8 @@ export default function DishFormScreen({ route, navigation }: Props) {
         <Switch value={isAvailable} onValueChange={setIsAvailable} />
       </View>
 
+      {saveError && <Text accessibilityRole="alert" style={styles.errorText}>{saveError}</Text>}
+
       <TouchableOpacity style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={handleSave} disabled={saving}>
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{t('save')}</Text>}
       </TouchableOpacity>
@@ -146,5 +200,6 @@ const styles = StyleSheet.create({
   switchHint: { color: '#788477', fontSize: 11, marginTop: 3 },
   saveBtn: { backgroundColor: '#245B43', padding: 15, borderRadius: 14, alignItems: 'center', marginTop: 8, minHeight: 52, justifyContent: 'center' },
   saveBtnDisabled: { opacity: 0.7 },
-  saveBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 }
+  saveBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  errorText: { color: '#A23D32', fontSize: 13, lineHeight: 19, marginTop: 10 }
 });

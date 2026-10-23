@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext, useCallback } from 'react';
+import React, { useState, useEffect, useContext, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, FlatList, TouchableOpacity,
   StyleSheet, Image, ActivityIndicator, ListRenderItem, ScrollView,
@@ -11,6 +11,18 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ENDPOINTS } from '../constants/api';
 import { LanguageContext } from '../context/LanguageContext';
 import { Dish, DishCategory, RootStackParamList } from '../types';
+import {
+  applyPendingActions,
+  readOfflineQueue,
+  removeOfflineAction,
+  replaceCachedDish,
+} from '../services/offlineDishes';
+import {
+  mergePendingCategories,
+  readPendingCategories,
+  removePendingCategory,
+  replaceCachedCategory,
+} from '../services/offlineCategories';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'DishList'>;
 
@@ -21,6 +33,7 @@ export default function DishListScreen({ navigation }: Props) {
   const [categories, setCategories] = useState<DishCategory[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
 
   const [searchText, setSearchText] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
@@ -28,6 +41,7 @@ export default function DishListScreen({ navigation }: Props) {
   const [minPrice, setMinPrice] = useState<string>('');
   const [maxPrice, setMaxPrice] = useState<string>('');
   const [sortBy, setSortBy] = useState<string>('');
+  const syncingRef = useRef(false);
 
   const fetchData = useCallback(async (connected?: boolean | null) => {
     setLoading(true);
@@ -48,14 +62,25 @@ export default function DishListScreen({ navigation }: Props) {
           throw new Error(t('categoryApiError'));
         }
         const categoryData = Array.isArray(resCat.data) ? resCat.data : [];
-        const dishData = Array.isArray(resDish.data) ? resDish.data : [];
-        setCategories(categoryData);
+        const [pendingActions, pendingCategories] = await Promise.all([
+          readOfflineQueue(),
+          readPendingCategories(),
+        ]);
+        const dishData = await applyPendingActions(resDish.data, pendingActions);
+        const mergedCategories = mergePendingCategories(categoryData, pendingCategories);
+        setPendingSyncCount(pendingActions.length + pendingCategories.length);
+        setCategories(mergedCategories);
         setDishes(dishData);
         await AsyncStorage.setItem('cached_dishes', JSON.stringify(dishData));
-        await AsyncStorage.setItem('cached_categories', JSON.stringify(categoryData));
+        await AsyncStorage.setItem('cached_categories', JSON.stringify(mergedCategories));
       } else {
         const cached = await AsyncStorage.getItem('cached_dishes');
         const cachedCat = await AsyncStorage.getItem('cached_categories');
+        const [pendingActions, pendingCategories] = await Promise.all([
+          readOfflineQueue(),
+          readPendingCategories(),
+        ]);
+        setPendingSyncCount(pendingActions.length + pendingCategories.length);
         if (cached) setDishes(JSON.parse(cached));
         if (cachedCat) setCategories(JSON.parse(cachedCat));
       }
@@ -67,12 +92,15 @@ export default function DishListScreen({ navigation }: Props) {
           : t('loadError');
       setLoadError(message);
       try {
-        const [cached, cachedCat] = await Promise.all([
+        const [cached, cachedCat, pendingActions, pendingCategories] = await Promise.all([
           AsyncStorage.getItem('cached_dishes'),
           AsyncStorage.getItem('cached_categories'),
+          readOfflineQueue(),
+          readPendingCategories(),
         ]);
         if (cached) setDishes(JSON.parse(cached) as Dish[]);
         if (cachedCat) setCategories(JSON.parse(cachedCat) as DishCategory[]);
+        setPendingSyncCount(pendingActions.length + pendingCategories.length);
       } catch (cacheError) {
         console.error('Could not read cached menu data:', cacheError);
       }
@@ -82,35 +110,100 @@ export default function DishListScreen({ navigation }: Props) {
   }, [t]);
 
   const syncOfflineData = useCallback(async () => {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
     try {
-      const queue = await AsyncStorage.getItem('offline_queue');
-      if (queue) {
-        const actions = JSON.parse(queue);
-        for (const act of actions) {
-          if (act.type === 'ADD') {
-            await axios.post(ENDPOINTS.DISHES, act.data);
-          } else if (act.type === 'EDIT') {
-            await axios.put(`${ENDPOINTS.DISHES}/${act.id}`, act.data);
-          } else if (act.type === 'DELETE') {
-            await axios.delete(`${ENDPOINTS.DISHES}/${act.id}`);
+      const pendingCategories = await readPendingCategories();
+      for (const pending of pendingCategories) {
+        if (pending.type === 'DELETE') {
+          const dishResponse = await axios.get<Dish[]>(ENDPOINTS.DISHES);
+          const isInUse = dishResponse.data.some(dish =>
+            dish.BIT247635_DishCategoryId === pending.logicalId
+          );
+          if (isInUse) {
+            const categoryResponse = await axios.get<DishCategory[]>(ENDPOINTS.CATEGORIES);
+            const category = categoryResponse.data.find(item =>
+              item.id === pending.serverId || item.BIT247635_Id === pending.logicalId
+            );
+            if (category) await replaceCachedCategory(pending.localId, category);
+            await removePendingCategory(pending.localId);
+            console.warn(
+              `Pending category deletion was cancelled because category ${pending.logicalId} is still used by dishes.`
+            );
+          } else {
+            await axios.delete(`${ENDPOINTS.CATEGORIES}/${pending.serverId}`);
           }
+        } else if (pending.type === 'EDIT') {
+          const saved = await axios.put<DishCategory>(
+            `${ENDPOINTS.CATEGORIES}/${pending.localId}`,
+            {
+              BIT247635_Id: pending.data.BIT247635_Id,
+              BIT247635_Name: pending.data.BIT247635_Name,
+              BIT247635_Description: pending.data.BIT247635_Description,
+            }
+          );
+          await replaceCachedCategory(pending.localId, saved.data);
+        } else {
+          const response = await axios.get<DishCategory[]>(ENDPOINTS.CATEGORIES);
+          const existing = response.data.find(category =>
+            category.BIT247635_Id === pending.data.BIT247635_Id
+          );
+          const savedCategory = existing
+            ? (await axios.put<DishCategory>(`${ENDPOINTS.CATEGORIES}/${existing.id}`, {
+              BIT247635_Id: pending.data.BIT247635_Id,
+              BIT247635_Name: pending.data.BIT247635_Name,
+              BIT247635_Description: pending.data.BIT247635_Description,
+            })).data
+            : (await axios.post<DishCategory>(ENDPOINTS.CATEGORIES, {
+              BIT247635_Id: pending.data.BIT247635_Id,
+              BIT247635_Name: pending.data.BIT247635_Name,
+              BIT247635_Description: pending.data.BIT247635_Description,
+            })).data;
+          await replaceCachedCategory(pending.localId, savedCategory);
         }
-        await AsyncStorage.removeItem('offline_queue');
-        await fetchData();
+        await removePendingCategory(pending.localId);
+      }
+
+      const actions = await readOfflineQueue();
+      for (const action of actions) {
+        if (action.type === 'ADD') {
+          const response = await axios.get<Dish[]>(ENDPOINTS.DISHES);
+          const existingDish = response.data.find(dish =>
+            dish.BIT247635_Id === action.data.BIT247635_Id
+          );
+          let syncedDish = existingDish;
+          if (!syncedDish) {
+            const data = { ...action.data };
+            delete (data as Partial<Dish>).id;
+            const created = await axios.post<Dish>(ENDPOINTS.DISHES, data);
+            syncedDish = created.data;
+          }
+          await replaceCachedDish(action.id, syncedDish);
+        } else if (action.type === 'EDIT') {
+          await axios.put(`${ENDPOINTS.DISHES}/${action.id}`, action.data);
+        } else {
+          await axios.delete(`${ENDPOINTS.DISHES}/${action.id}`);
+        }
+        await removeOfflineAction(action.id);
       }
     } catch (err) {
-      console.log('Sync error:', err);
+      console.error('Offline dish sync failed; pending changes remain queued:', err);
+    } finally {
+      syncingRef.current = false;
     }
-  }, [fetchData]);
+  }, []);
 
   useEffect(() => {
-    void NetInfo.fetch().then(
-      state => fetchData(state.isConnected),
-      () => fetchData()
-    );
+    void NetInfo.fetch().then(state => {
+      if (state.isConnected) {
+        void syncOfflineData().then(() => fetchData(true));
+      } else {
+        void fetchData(false);
+      }
+    }, () => fetchData());
     const unsubscribe = NetInfo.addEventListener(state => {
       if (state.isConnected) {
-        void syncOfflineData();
+        void syncOfflineData().then(() => fetchData());
       }
     });
     return () => unsubscribe();
@@ -145,7 +238,7 @@ export default function DishListScreen({ navigation }: Props) {
       <TouchableOpacity
         activeOpacity={0.88}
         style={styles.card}
-        onPress={() => navigation.navigate('DishDetail', { dishId: item.id, refresh: fetchData })}
+        onPress={() => navigation.navigate('DishDetail', { dishId: item.id, categories, refresh: fetchData })}
       >
         {thumbImg ? (
           <Image source={{ uri: thumbImg }} style={styles.thumb} />
@@ -180,6 +273,21 @@ export default function DishListScreen({ navigation }: Props) {
           <Text style={styles.langText}>{lang === 'en' ? 'VI' : 'EN'}</Text>
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity
+        style={styles.categoryManageBtn}
+        onPress={() => navigation.navigate('CategoryManagement', { refresh: fetchData })}
+        accessibilityRole="button"
+      >
+        <Text style={styles.categoryManageText}>{t('manageCategories')}</Text>
+        <Text style={styles.categoryManageArrow}>›</Text>
+      </TouchableOpacity>
+
+      {pendingSyncCount > 0 && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineBannerText}>{t('pendingSync')}</Text>
+        </View>
+      )}
 
       <View style={styles.searchBox}>
         <Text style={styles.searchIcon}>⌕</Text>
@@ -311,8 +419,13 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 18 },
   eyebrow: { color: '#788477', fontSize: 10, fontWeight: '800', letterSpacing: 1.7, marginBottom: 5 },
   headerTitle: { color: '#173B2C', fontSize: 24, fontWeight: '800', maxWidth: 290 },
+  offlineBanner: { backgroundColor: '#FFF0D7', marginHorizontal: 20, marginBottom: 12, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10 },
+  offlineBannerText: { color: '#75521D', fontSize: 12, fontWeight: '700' },
   langBtn: { backgroundColor: '#E3E9DF', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16 },
   langText: { color: '#245B43', fontWeight: '800', fontSize: 12 },
+  categoryManageBtn: { backgroundColor: '#E3E9DF', marginHorizontal: 20, marginTop: -7, marginBottom: 12, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  categoryManageText: { color: '#245B43', fontWeight: '800', fontSize: 12 },
+  categoryManageArrow: { color: '#245B43', fontSize: 19, fontWeight: '800' },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', marginHorizontal: 20, borderRadius: 16, paddingHorizontal: 14, height: 52, borderWidth: 1, borderColor: '#ECEDE7' },
   searchIcon: { color: '#245B43', fontSize: 26, marginRight: 9 },
   searchInput: { flex: 1, color: '#23352C', fontSize: 15, paddingVertical: 8 },
